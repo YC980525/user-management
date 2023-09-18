@@ -2,6 +2,8 @@ package com.example.usermanagement;
 
 import java.util.Set;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -12,7 +14,6 @@ import jakarta.persistence.Table;
 @Entity
 @Table(name = "USERS")
 public class User {
-
     @Id
     @Column(length = 128, nullable = false)
     private String username;
@@ -23,7 +24,18 @@ public class User {
     @Column(length = 5, nullable = false)
     private char enabled;
 
+    @Column(length = 5, nullable = false)
+    private String email;
+
+    @JsonIgnore
     @OneToMany(cascade = CascadeType.ALL)
     private Set<Authority> authorities;
 
+    public String getUsername() {
+        return username;
+    }
+
+    public String getEmail() {
+        return email;
+    }
 }
