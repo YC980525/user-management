@@ -30,6 +30,7 @@ public class User {
     @Column(nullable = false)
     private Boolean enabled;
 
+    @JsonIgnore
     @OneToMany(cascade = CascadeType.ALL)
     @JoinColumn(name = "username")
     private Set<Authority> authorities;
@@ -94,4 +95,14 @@ public class User {
         this.email = email;
     }
 
+    @Override
+    public String toString() {
+        return String.format(
+            "User [username=%s, password=%s, enabled=%s, authorities=%s, email=%s]",
+            username,
+            password,
+            enabled,
+            authorities,
+            email);
+    }
 }

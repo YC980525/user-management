@@ -1,10 +1,11 @@
 package com.example.usermanagement;
-import static org.hamcrest.Matchers.containsInAnyOrder;
+
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -13,9 +14,13 @@ import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -42,14 +47,14 @@ class UserManagementApplicationTests {
         admin.setPassword(passwordEncoder.encode("admin-password"));
         admin.setEmail("admin@domain.com");
         admin.setEnabled(true);
-        admin.setRoles("Admin", "User");
+        admin.setRoles("ADMIN", "USER");
 
         User user = new User();
         user.setUsername("user");
         user.setPassword(passwordEncoder.encode("user-password"));
         user.setEmail("user@domain.com");
         user.setEnabled(true);
-        user.setRoles("User");
+        user.setRoles("USER");
 
         userManagementRepository.save(admin);
         userManagementRepository.save(user);
@@ -78,22 +83,74 @@ class UserManagementApplicationTests {
     }
 
     @Test
-    void shouldGetAuthorizedForAdminAccessingAdminEndpoint() throws Exception {
+    void shouldGetOkForAdminAccessingAllUsers() throws Exception {
         String expectedJson = """
-        [
-            {"username": "admin","email": "admin@domain.com"},
-            {"username": "user","email": "user@domain.com"}
-        ]
-        """;
+            [
+                {"username": "admin", "email": "admin@domain.com"},
+                {"username": "user", "email": "user@domain.com"}
+            ]
+            """;
 
         mockMvc
             .perform(get("/home/admin/all-users").with(httpBasic("admin", "admin-password")))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.length()").value(2))
-            .andExpect(jsonPath("$..username").value(containsInAnyOrder("admin", "user")))
-            .andExpect(jsonPath("$..email").value(
-                containsInAnyOrder("admin@domain.com", "user@domain.com")))
-            .andExpect(content().json(expectedJson));
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson, true));
+    }
 
+    @Test
+    void shouldGetBadRequestForCreatingExistingUser() throws Exception {
+
+        User user = new User();
+        user.setUsername("user");
+        user.setPassword("user-password");
+        user.setEmail("user@domain.com");
+
+        mockMvc
+            .perform(
+                post("/home/sign-up")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(new ObjectMapper().writeValueAsString(user)))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void shouldGetNotFoundForAccessingOtherUserEndpoint() throws Exception {
+
+        mockMvc
+            .perform(
+                get("/home/dummy").with(httpBasic("admin", "admin-password")))
+            .andExpectAll(
+                status().isNotFound());
+
+    }
+
+    @Test
+    void shouldRedirectForCreatingNewUser() throws Exception {
+
+        String expectedJson = """
+                {"username": "dummy", "email": "dummy@domain.com"}
+            """;
+        String inputJson = """
+                {"username": "dummy", "email": "dummy@domain.com", "password": "dummy-password"}
+            """;
+
+        MvcResult mvcResult = mockMvc
+            .perform(
+                post("/home/sign-up")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(inputJson))
+            .andExpectAll(
+                status().isSeeOther(),
+                redirectedUrl("http://localhost/home/dummy"))
+            .andReturn();
+
+        String redirectUrl = mvcResult.getResponse().getRedirectedUrl();
+
+        mockMvc
+            .perform(get(redirectUrl).with(httpBasic("dummy", "dummy-password")))
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson));
     }
 }
