@@ -3,8 +3,6 @@ package com.example.usermanagement;
 import java.util.HashMap;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -16,7 +14,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.util.UriComponents;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import lombok.extern.slf4j.Slf4j;
@@ -56,10 +53,22 @@ public class UserManagementController {
         }
     }
 
+    @PostMapping("/login")
+    public ResponseEntity<String> logIn(
+        @AuthenticationPrincipal UserDetails userDetails,
+        UriComponentsBuilder uriComponentsBuilder) {
+        var uri = uriComponentsBuilder
+            .path("/home/{username}")
+            .buildAndExpand(userDetails.getUsername())
+            .toUri();
+
+        return ResponseEntity.ok().location(uri).build();
+    }
+
     @PostMapping("/sign-up")
     public ResponseEntity<String> signUp(
         @RequestBody HashMap<String, String> requestBody,
-        UriComponentsBuilder ucb) {
+        UriComponentsBuilder uriComponentsBuilder) {
         if (!requestBody.containsKey("username") || (!requestBody.containsKey("password"))) {
             return ResponseEntity.badRequest().body("Username or password not provided.");
         }
@@ -79,13 +88,11 @@ public class UserManagementController {
 
         user = userManagementRepository.findByUsername(user.getUsername());
 
-        UriComponents uriComponents = ucb
+        var uri = uriComponentsBuilder
             .path("/home/{username}")
-            .buildAndExpand(user.getUsername());
+            .buildAndExpand(user.getUsername())
+            .toUri();
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setLocation(uriComponents.toUri());
-
-        return new ResponseEntity<>(headers, HttpStatus.SEE_OTHER);
+        return ResponseEntity.created(uri).build();
     }
 }

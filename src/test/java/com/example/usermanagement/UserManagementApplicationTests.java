@@ -1,6 +1,9 @@
 package com.example.usermanagement;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.authenticated;
+import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -9,18 +12,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -40,8 +44,12 @@ class UserManagementApplicationTests {
     @Autowired
     PasswordEncoder passwordEncoder;
 
+    @Autowired
+    TestRestTemplate restTemplate;
+
     @BeforeAll
-    public void createTestUser() {
+    public void setUp() {
+
         User admin = new User();
         admin.setUsername("admin");
         admin.setPassword(passwordEncoder.encode("admin-password"));
@@ -58,6 +66,13 @@ class UserManagementApplicationTests {
 
         userManagementRepository.save(admin);
         userManagementRepository.save(user);
+    }
+
+    @BeforeEach
+    public void cleanUp() {
+        if (userManagementRepository.existsByUsername("dummy")) {
+            userManagementRepository.deleteByUsername("dummy");
+        }
     }
 
     @Test
@@ -95,22 +110,36 @@ class UserManagementApplicationTests {
             .perform(get("/home/admin/all-users").with(httpBasic("admin", "admin-password")))
             .andExpectAll(
                 status().isOk(),
-                content().json(expectedJson, true));
+                content().json(expectedJson));
+    }
+
+    @Test
+    void shouldGetOkForAccesingOwnResource() throws Exception {
+        String expectedJson = """
+            {"username": "user", "email": "user@domain.com"}
+            """;
+
+        mockMvc
+            .perform(get("/home/user").with(httpBasic("user", "user-password")))
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson));
+
     }
 
     @Test
     void shouldGetBadRequestForCreatingExistingUser() throws Exception {
 
-        User user = new User();
-        user.setUsername("user");
-        user.setPassword("user-password");
-        user.setEmail("user@domain.com");
+        String inputJson = """
+                {"username": "user", "email": "user@domain.com", "password": "user-password"}
+            """;
 
         mockMvc
             .perform(
                 post("/home/sign-up")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(new ObjectMapper().writeValueAsString(user)))
+                    .content(inputJson)
+                    .with(csrf()))
             .andExpect(status().isBadRequest());
     }
 
@@ -126,7 +155,7 @@ class UserManagementApplicationTests {
     }
 
     @Test
-    void shouldRedirectForCreatingNewUser() throws Exception {
+    void shouldGetCreatedAndRedirectForCreatingNewUser() throws Exception {
 
         String expectedJson = """
                 {"username": "dummy", "email": "dummy@domain.com"}
@@ -139,11 +168,13 @@ class UserManagementApplicationTests {
             .perform(
                 post("/home/sign-up")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(inputJson))
+                    .content(inputJson)
+                    .with(csrf()))
             .andExpectAll(
-                status().isSeeOther(),
+                status().isCreated(),
                 redirectedUrl("http://localhost/home/dummy"))
             .andReturn();
+
 
         String redirectUrl = mvcResult.getResponse().getRedirectedUrl();
 
@@ -152,5 +183,77 @@ class UserManagementApplicationTests {
             .andExpectAll(
                 status().isOk(),
                 content().json(expectedJson));
+    }
+
+    @Test
+    void shouldGetOkandRedirectedAfterLogin() throws Exception {
+
+        String expectedJson = """
+                {"username": "user", "email": "user@domain.com"}
+            """;
+
+        MvcResult mvcResult = mockMvc.perform(
+            post("/home/login")
+                .with(httpBasic("user", "user-password"))
+                .with(csrf()))
+            .andExpectAll(
+                status().isOk(),
+                redirectedUrl("http://localhost/home/user"))
+            .andReturn();
+
+        String redirectUrl = mvcResult.getResponse().getRedirectedUrl();
+        MockHttpSession session = (MockHttpSession) mvcResult.getRequest().getSession();
+
+        mockMvc
+            .perform(get(redirectUrl).session(session))
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson));
+
+        mockMvc
+            .perform(post("/home/logout").session(session).with(csrf()))
+            .andExpectAll(
+                status().isNoContent(),
+                unauthenticated());
+
+    }
+
+    @Test
+    void shouldGetUnauthorizedForFirstSessionAfterSecondLogin() throws Exception {
+
+        String expectedJson = """
+                {"username": "user", "email": "user@domain.com"}
+            """;
+
+        MvcResult mvcResult = mockMvc
+            .perform(
+                post("/home/login")
+                    .with(httpBasic("user", "user-password"))
+                    .with(csrf()))
+            .andReturn();
+
+        String redirectUrl = mvcResult.getResponse().getRedirectedUrl();
+        MockHttpSession firstSession = (MockHttpSession) mvcResult.getRequest().getSession();
+        mvcResult = mockMvc
+            .perform(
+                post("/home/login")
+                    .with(httpBasic("user", "user-password"))
+                    .with(csrf()))
+            .andReturn();
+
+        MockHttpSession secondSession = (MockHttpSession) mvcResult.getRequest().getSession();
+
+        mockMvc
+            .perform(get(redirectUrl).session(firstSession))
+            .andExpectAll(
+                status().isOk(),
+                unauthenticated());
+
+        mockMvc
+            .perform(get(redirectUrl).session(secondSession))
+            .andExpectAll(
+                status().isOk(),
+                authenticated());
+
     }
 }

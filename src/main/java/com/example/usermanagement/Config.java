@@ -21,12 +21,15 @@ public class Config {
 
         http
             // .formLogin(withDefaults())
-            .csrf(csrf -> csrf.disable())
-            .authorizeHttpRequests(
-                authorizeHttpRequests -> authorizeHttpRequests
-                    .requestMatchers("/home/admin/**").hasRole("ADMIN")
-                    .requestMatchers("/home/sign-up").permitAll()
-                    .anyRequest().authenticated())
+            .logout(logout -> logout
+                .logoutUrl("/home/logout"))
+            .sessionManagement(session -> session
+                .maximumSessions(1))
+            .csrf(withDefaults())
+            .authorizeHttpRequests(authorizeHttpRequests -> authorizeHttpRequests
+                .requestMatchers("/home/admin/**").hasRole("ADMIN")
+                .requestMatchers("/home/sign-up").permitAll()
+                .anyRequest().authenticated())
             .httpBasic(withDefaults());
 
         var securityFilterChain = http.build();
