@@ -4,14 +4,15 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.authenticated;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -47,8 +48,9 @@ class UserManagementApplicationTests {
     @Autowired
     TestRestTemplate restTemplate;
 
-    @BeforeAll
-    public void setUp() {
+    @BeforeEach
+    public void resetUserData() {
+        userManagementRepository.deleteAll();
 
         User admin = new User();
         admin.setUsername("admin");
@@ -66,13 +68,6 @@ class UserManagementApplicationTests {
 
         userManagementRepository.save(admin);
         userManagementRepository.save(user);
-    }
-
-    @BeforeEach
-    public void cleanUp() {
-        if (userManagementRepository.existsByUsername("dummy")) {
-            userManagementRepository.deleteByUsername("dummy");
-        }
     }
 
     @Test
@@ -120,7 +115,7 @@ class UserManagementApplicationTests {
             """;
 
         mockMvc
-            .perform(get("/home/user").with(httpBasic("user", "user-password")))
+            .perform(get("/home/user/profile").with(httpBasic("user", "user-password")))
             .andExpectAll(
                 status().isOk(),
                 content().json(expectedJson));
@@ -148,7 +143,7 @@ class UserManagementApplicationTests {
 
         mockMvc
             .perform(
-                get("/home/dummy").with(httpBasic("admin", "admin-password")))
+                get("/home/dummy/profile").with(httpBasic("admin", "admin-password")))
             .andExpectAll(
                 status().isNotFound());
 
@@ -172,7 +167,7 @@ class UserManagementApplicationTests {
                     .with(csrf()))
             .andExpectAll(
                 status().isCreated(),
-                redirectedUrl("http://localhost/home/dummy"))
+                redirectedUrl("http://localhost/home/dummy/profile"))
             .andReturn();
 
 
@@ -183,6 +178,8 @@ class UserManagementApplicationTests {
             .andExpectAll(
                 status().isOk(),
                 content().json(expectedJson));
+
+        resetUserData();
     }
 
     @Test
@@ -198,7 +195,7 @@ class UserManagementApplicationTests {
                 .with(csrf()))
             .andExpectAll(
                 status().isOk(),
-                redirectedUrl("http://localhost/home/user"))
+                redirectedUrl("http://localhost/home/user/profile"))
             .andReturn();
 
         String redirectUrl = mvcResult.getResponse().getRedirectedUrl();
@@ -256,4 +253,76 @@ class UserManagementApplicationTests {
                 authenticated());
 
     }
+
+    @Test
+    void shouldGetOkForUpdatingProfileAndMustLogInAgain() throws Exception {
+        MvcResult mvcResult = mockMvc.perform(
+            post("/home/login")
+                .with(httpBasic("user", "user-password"))
+                .with(csrf()))
+            .andReturn();
+
+        MockHttpSession session = (MockHttpSession) mvcResult.getRequest().getSession();
+
+        String expectedJson = """
+            {"username": "user", "email": "updatedUser@domain.com"}
+            """;
+
+        String inputJson = """
+            {"password": "updatedPassword", "email": "updatedUser@domain.com"}
+            """;
+
+        mockMvc
+            .perform(
+                patch("/home/user/update")
+                    .session(session)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(inputJson)
+                    .with(csrf()))
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson));
+
+        mockMvc
+            .perform(get("/home/user/profile").session(session))
+            .andExpectAll(
+                status().isUnauthorized(),
+                unauthenticated());
+
+        mockMvc
+            .perform(get("/home/user/profile").with(httpBasic("user", "updatedPassword")))
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson));
+
+    }
+
+    @Test
+    void shouldGetNoContentAfterDeletingUserProfile() throws Exception {
+
+        MvcResult mvcResult = mockMvc.perform(
+            post("/home/login")
+                .with(httpBasic("user", "user-password"))
+                .with(csrf()))
+            .andReturn();
+
+        MockHttpSession session = (MockHttpSession) mvcResult.getRequest().getSession();
+
+        mockMvc
+            .perform(delete("/home/user/delete").session(session).with(csrf()))
+            .andExpectAll(
+                status().isNoContent());
+
+        mockMvc
+            .perform(get("/home/user/profile").session(session))
+            .andExpectAll(
+                status().isUnauthorized());
+
+        mockMvc
+            .perform(get("/home/user/profile").with(httpBasic("user", "user-password")))
+            .andExpectAll(
+                status().isUnauthorized());
+
+    }
+
 }
