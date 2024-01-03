@@ -1,5 +1,6 @@
 package com.example.usermanagement;
 
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.authenticated;
@@ -9,16 +10,18 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
@@ -26,7 +29,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-
 import lombok.extern.slf4j.Slf4j;
 
 @AutoConfigureMockMvc
@@ -47,6 +49,9 @@ class UserManagementApplicationTests {
 
     @Autowired
     TestRestTemplate restTemplate;
+
+    @SpyBean
+    PasswordResetService passwordResetService;
 
     @BeforeEach
     public void resetUserData() {
@@ -93,12 +98,12 @@ class UserManagementApplicationTests {
     }
 
     @Test
-    void shouldGetOkForAdminAccessingAllUsers() throws Exception {
+    void shouldGetOkForAdminAccessingAllUsersEndpoint() throws Exception {
         String expectedJson = """
-            [
-                {"username": "admin", "email": "admin@domain.com"},
-                {"username": "user", "email": "user@domain.com"}
-            ]
+                [
+                    {"username": "admin", "email": "admin@domain.com"},
+                    {"username": "user", "email": "user@domain.com"}
+                ]
             """;
 
         mockMvc
@@ -111,7 +116,7 @@ class UserManagementApplicationTests {
     @Test
     void shouldGetOkForAccesingOwnResource() throws Exception {
         String expectedJson = """
-            {"username": "user", "email": "user@domain.com"}
+                {"username": "user", "email": "user@domain.com"}
             """;
 
         mockMvc
@@ -119,6 +124,17 @@ class UserManagementApplicationTests {
             .andExpectAll(
                 status().isOk(),
                 content().json(expectedJson));
+
+    }
+
+    @Test
+    void shouldGetNotFoundForAccessingOtherUserEndpoint() throws Exception {
+
+        mockMvc
+            .perform(
+                get("/home/dummy/profile").with(httpBasic("admin", "admin-password")))
+            .andExpectAll(
+                status().isForbidden());
 
     }
 
@@ -139,13 +155,12 @@ class UserManagementApplicationTests {
     }
 
     @Test
-    void shouldGetNotFoundForAccessingOtherUserEndpoint() throws Exception {
-
+    void shouldGetOkForFetchingSignUpEndpoint() throws Exception {
         mockMvc
-            .perform(
-                get("/home/dummy/profile").with(httpBasic("admin", "admin-password")))
+            .perform(get("/home/sign-up"))
             .andExpectAll(
-                status().isNotFound());
+                status().isOk(),
+                cookie().doesNotExist("XSRF-TOKEN"));
 
     }
 
@@ -153,10 +168,14 @@ class UserManagementApplicationTests {
     void shouldGetCreatedAndRedirectForCreatingNewUser() throws Exception {
 
         String expectedJson = """
-                {"username": "dummy", "email": "dummy@domain.com"}
+                {"username": "newUser", "email": "newUser@domain.com"}
             """;
         String inputJson = """
-                {"username": "dummy", "email": "dummy@domain.com", "password": "dummy-password"}
+                {
+                    "username": "newUser",
+                    "email": "newUser@domain.com",
+                    "password": "newUser-password"
+                }
             """;
 
         MvcResult mvcResult = mockMvc
@@ -167,19 +186,29 @@ class UserManagementApplicationTests {
                     .with(csrf()))
             .andExpectAll(
                 status().isCreated(),
-                redirectedUrl("http://localhost/home/dummy/profile"))
+                redirectedUrl("http://localhost/home/newUser/profile"))
             .andReturn();
 
 
         String redirectUrl = mvcResult.getResponse().getRedirectedUrl();
 
         mockMvc
-            .perform(get(redirectUrl).with(httpBasic("dummy", "dummy-password")))
+            .perform(get(redirectUrl).with(httpBasic("newUser", "newUser-password")))
             .andExpectAll(
                 status().isOk(),
                 content().json(expectedJson));
 
         resetUserData();
+    }
+
+    @Test
+    void shouldGetOkForFetchingLogInEndpoint() throws Exception {
+        mockMvc
+            .perform(get("/home/login"))
+            .andExpectAll(
+                status().isOk(),
+                cookie().doesNotExist("XSRF-TOKEN"));
+
     }
 
     @Test
@@ -194,7 +223,7 @@ class UserManagementApplicationTests {
                 .with(httpBasic("user", "user-password"))
                 .with(csrf()))
             .andExpectAll(
-                status().isOk(),
+                status().isFound(),
                 redirectedUrl("http://localhost/home/user/profile"))
             .andReturn();
 
@@ -217,10 +246,6 @@ class UserManagementApplicationTests {
 
     @Test
     void shouldGetUnauthorizedForFirstSessionAfterSecondLogin() throws Exception {
-
-        String expectedJson = """
-                {"username": "user", "email": "user@domain.com"}
-            """;
 
         MvcResult mvcResult = mockMvc
             .perform(
@@ -265,11 +290,11 @@ class UserManagementApplicationTests {
         MockHttpSession session = (MockHttpSession) mvcResult.getRequest().getSession();
 
         String expectedJson = """
-            {"username": "user", "email": "updatedUser@domain.com"}
+                {"username": "user", "email": "updatedUser@domain.com"}
             """;
 
         String inputJson = """
-            {"password": "updatedPassword", "email": "updatedUser@domain.com"}
+                {"password": "updatedPassword", "email": "updatedUser@domain.com"}
             """;
 
         mockMvc
@@ -298,7 +323,7 @@ class UserManagementApplicationTests {
     }
 
     @Test
-    void shouldGetNoContentAfterDeletingUserProfile() throws Exception {
+    void shouldDeleteUserProfileAndReturnNoContent() throws Exception {
 
         MvcResult mvcResult = mockMvc.perform(
             post("/home/login")
@@ -322,6 +347,52 @@ class UserManagementApplicationTests {
             .perform(get("/home/user/profile").with(httpBasic("user", "user-password")))
             .andExpectAll(
                 status().isUnauthorized());
+
+    }
+
+    @Test
+    void shouldResetPasswordAfterRequestingForgetPassword() throws Exception {
+
+        User user = userManagementRepository.findByEmail("user@domain.com");
+        PasswordResetToken testToken = new PasswordResetToken(UUID.randomUUID().toString(), user);
+        when(passwordResetService.generateToken(user)).thenReturn(testToken);
+
+        String inputJson = """
+            {"email": "user@domain.com"}
+            """;
+
+        mockMvc
+            .perform(
+                post("/home/forget-password")
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(inputJson))
+            .andExpectAll(
+                status().isOk());
+
+        inputJson = """
+            {"password": "updatedPassword"}
+            """;
+
+        mockMvc
+            .perform(
+                post("/home/reset-password")
+                    .param("token", testToken.getTokenValue())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(inputJson)
+                    .with(csrf()))
+            .andExpectAll(
+                status().isOk());
+
+        String expectedJson = """
+            {"username": "user", "email": "user@domain.com"}
+            """;
+
+        mockMvc
+            .perform(get("/home/user/profile").with(httpBasic("user", "updatedPassword")))
+            .andExpectAll(
+                status().isOk(),
+                content().json(expectedJson));
 
     }
 
